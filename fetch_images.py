@@ -87,7 +87,7 @@ class OpenSearch:
             elif field_type == "date":
                 value = datetime.datetime.strptime(value[:-5], "%Y-%m-%dT%H:%M:%S")
             meta[field] = value
-        print(meta)
+        return meta
 
     def _parse_xml(self, tree):
         if isinstance(tree, str):
@@ -142,7 +142,8 @@ def main():
     # search.search_terms(terms)
     res = search.search(create_query(terms), start=0, rows=1)
     for entry in res["entries"]:
-        search.parse_entry(entry)
+        meta = search.parse_entry(entry)
+        print(meta)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ Search for satellite images in specified geographical area.
 import os
 import requests
 import requests_cache
+import datetime
 import xml.etree.ElementTree as ET
 
 
@@ -25,6 +26,20 @@ def bounds_to_points(bound_box):
     ]
 
 
+def create_query(terms):
+    query = " AND ".join(f"{k}:{v}" for k, v in terms.items())
+    return f"({query})"
+
+
+def polygon_from_points(points):
+    points = ",".join(" ".join(b) for b in points)
+    return f"POLYGON(({points}))"
+
+
+def polygon_from_bound_box(box):
+    return polygon_from_points(bounds_to_points(box))
+
+
 class OpenSearch:
 
     base_url = "https://scihub.copernicus.eu/dhus"
@@ -33,16 +48,51 @@ class OpenSearch:
         "os": "http://a9.com/-/spec/opensearch/1.1/"
     }
 
+    entry_fields = {
+        "platformname": "str",
+        "size": "str",
+        "producttype": "str",
+        "filename": "str",
+        "format": "str",
+        "footprint": "str",
+        "beginposition": "date",
+        "endposition": "date",
+        "orbitnumber": "int",
+        "relativeorbitnumber": "int",
+        "cloudcoverpercentage": "double",
+        "highprobacloudspercentage": "double",
+        "mediumprobacloudspercentage": "double",
+        "snowicepercentage": "double",
+        "vegetationpercentage": "double",
+        "waterpercentage": "double",
+        "notvegetatedpercentage": "double",
+        "unclassifiedpercentage": "double",
+    }
+
     def __init__(self, user, password):
         self._session = requests.Session()
         self._user = user
         self._password = password
 
-    def _parse_entry(self, entry):
-        platform = entry.find(".//a:str[@name='platformname']", self._ns)
-        print(platform.text)
+    @classmethod
+    def parse_entry(cls, entry):
+        meta = {}
+        for field, field_type in cls.entry_fields.items():
+            value = entry.find(
+                f".//a:{field_type}[@name='{field}']", cls._ns).text
+            if field_type == "double":
+                value = float(value)
+            elif field_type == "int":
+                value = int(value)
+            elif field_type == "date":
+                value = datetime.datetime.strptime(value[:-5], "%Y-%m-%dT%H:%M:%S")
+            meta[field] = value
+        print(meta)
 
     def _parse_xml(self, tree):
+        if isinstance(tree, str):
+            tree = ET.fromstring(tree)
+
         total_results = tree.find(".//os:totalResults", self._ns).text
         start_index = tree.find(".//os:startIndex", self._ns).text
         # title = tree.findall(".//", self._ns)
@@ -53,12 +103,15 @@ class OpenSearch:
             "entries": entries,
         }
 
-    def search(self, query, start=0, rows=100):
+    def search_raw(self, query, start=0, rows=100):
         url = f"{self.base_url}/search?start={start}&rows={rows}&q=" + query
         resp = self._session.get(url, auth=(self._user, self._password))
         if resp.status_code != 200:
             raise RuntimeError(resp)
-        return self._parse_xml(ET.fromstring(resp.text))
+        return resp.text
+
+    def search(self, *args, **kwargs):
+        return self._parse_xml(self.search_raw(*args, **kwargs))
 
     def search_terms(self, terms):
         query = create_query(terms)
@@ -74,20 +127,6 @@ class OpenSearch:
         return entries
 
 
-def create_query(terms):
-    query = " AND ".join(f"{k}:{v}" for k, v in terms.items())
-    return f"({query})"
-
-
-def polygon_from_points(points):
-    points = ",".join(" ".join(b) for b in points)
-    return f"POLYGON(({points}))"
-
-
-def polygon_from_bound_box(box):
-    return polygon_from_points(bounds_to_points(box))
-
-
 def main():
     user = os.environ["COPERNICUS_USER"]
     password = os.environ["COPERNICUS_PASS"]
@@ -100,7 +139,10 @@ def main():
         "footprint": f"\"Intersects({poly})\"",
         # "cloudcoverpercentage": "0",
     }
-    search.search_terms(terms)
+    # search.search_terms(terms)
+    res = search.search(create_query(terms), start=0, rows=1)
+    for entry in res["entries"]:
+        search.parse_entry(entry)
 
 
 if __name__ == "__main__":

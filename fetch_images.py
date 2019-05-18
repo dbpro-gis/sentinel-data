@@ -7,15 +7,24 @@ Search for satellite images in specified geographical area.
 4. Initiate download.
 """
 import os
+import datetime
+import collections
+import xml.etree.ElementTree as ET
+
 import requests
 import requests_cache
-import datetime
-import xml.etree.ElementTree as ET
+
+import shapefile
+import shapely.wkt as swkt
+
+import matplotlib
+matplotlib.use('TkAgg')
+import matplotlib.pyplot as plt
 
 
 requests_cache.install_cache("sentinel_cache")
 
-
+# Bounding box is defined by lon lat lon lat, imagine 4 lines
 BOUNDS_GERMANY = ["5.86442", "47.26543", "15.05078", "55.14777"]
 
 
@@ -55,6 +64,7 @@ class OpenSearch:
         "filename": "str",
         "format": "str",
         "footprint": "str",
+        "uuid": "str",
         "beginposition": "date",
         "endposition": "date",
         "orbitnumber": "int",
@@ -85,7 +95,8 @@ class OpenSearch:
             elif field_type == "int":
                 value = int(value)
             elif field_type == "date":
-                value = datetime.datetime.strptime(value[:-5], "%Y-%m-%dT%H:%M:%S")
+                value = datetime.datetime.strptime(
+                    value[:-5], "%Y-%m-%dT%H:%M:%S")
             meta[field] = value
         return meta
 
@@ -127,10 +138,28 @@ class OpenSearch:
         return entries
 
 
+def export_meta_shapes_to_shapefile(metas, outpath):
+    footcount = collections.Counter(m["footprint"] for m in metas)
+    coords = []
+    for footprint in footcount:
+        polys = swkt.loads(footprint)
+        if "MultiPolygon" in str(type(polys)):
+            for poly in polys:
+                coords.append(list(poly.exterior.coords))
+        else:
+            coords.append(list(polys.exterior.coords))
+
+    with shapefile.Writer(outpath) as shp:
+        shp.field("name", "C")
+        shp.poly(coords)
+        shp.record("polygon2")
+
+
 def main():
     user = os.environ["COPERNICUS_USER"]
     password = os.environ["COPERNICUS_PASS"]
     poly = polygon_from_bound_box(BOUNDS_GERMANY)
+
     search = OpenSearch(user, password)
     terms = {
         "platformname": "Sentinel-2",
@@ -139,11 +168,35 @@ def main():
         "footprint": f"\"Intersects({poly})\"",
         # "cloudcoverpercentage": "0",
     }
-    # search.search_terms(terms)
-    res = search.search(create_query(terms), start=0, rows=1)
-    for entry in res["entries"]:
-        meta = search.parse_entry(entry)
-        print(meta)
+    entries = search.search_terms(terms)
+    metas = [search.parse_entry(e) for e in entries]
+
+    # create shapefiles
+    export_meta_shapes_to_shapefile(metas, "shapefiles/fucky")
+
+    # plot time
+    times = collections.Counter([meta["beginposition"] for meta in metas])
+    sel_time, _ = times.most_common(1)[0]
+    sel_metas = [m for m in metas if m["beginposition"] == sel_time]
+    footcount = collections.Counter(m["footprint"] for m in sel_metas)
+    print(footcount.most_common(1))
+
+    # res = search.search(create_query(terms), start=0, rows=1)
+    # entries = res["entries"]
+    # for entry in res["entries"]:
+    #     meta = search.parse_entry(entry)
+    #     print(meta)
+    # footprints = []
+    # for entry in entries:
+    #     meta = search.parse_entry(entry)
+    #     footprints.append(meta["footprint"])
+    # counts = collections.Counter(footprints)
+    # print(counts.most_common(3))
+    plt.scatter(times.keys(), times.values(), s=1)
+    plt.ylabel("Number of files")
+    plt.xlabel("Acquisition time")
+    plt.tight_layout()
+    plt.savefig("timeplot.png")
 
 
 if __name__ == "__main__":

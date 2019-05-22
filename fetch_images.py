@@ -1,4 +1,4 @@
-# noqa: E266
+# flake8: noqa
 """
 Search for satellite images in specified geographical area.
 
@@ -17,7 +17,11 @@ import xml.etree.ElementTree as ET
 import requests
 import requests_cache
 
+import rtree.index as ri
+
 import shapefile
+from shapely.geometry import MultiPolygon, Polygon, LineString
+from shapely.ops import split
 import shapely.wkt as swkt
 
 import matplotlib
@@ -38,6 +42,17 @@ def bounds_to_points(bound_box):
     return [
         (lon1, lat1), (lon2, lat1), (lon2, lat2), (lon1, lat2), (lon1, lat1)
     ]
+
+
+def bounds_to_points_float(bound_box):
+    lon1, lat1, lon2, lat2 = bound_box
+    lon1, lat1, lon2, lat2 = float(lon1), float(lat1), float(lon2), float(lat2)
+    return [
+        (lon1, lat1), (lon2, lat1), (lon2, lat2), (lon1, lat2), (lon1, lat1)
+    ]
+
+
+POLY_GERMANY = bounds_to_points_float(BOUNDS_GERMANY)
 
 
 def create_query(terms):
@@ -64,6 +79,14 @@ def select_prod_builder(key):
     def filterfun(items):
         return selectsingle(filter(lambda i: key in i, items))
     return filterfun
+
+
+def parse_size(size):
+    if size.endswith("GB"):
+        size = float(size[:-3]) * 1000
+    else:
+        size = float(size[:-3])
+    return size
 
 
 class OData:
@@ -147,7 +170,7 @@ class OData:
                             downloaded += len(chunk)
                             done = int(50 * downloaded / total_length)
                             sys.stdout.write(
-                                f"\r{filename}: [{'=' * done}{' ' * (50-done)}]")
+                                f"\r{filename}: [{'='*done}{' '*(50-done)}]")
                             sys.stdout.flush()
         return path
 
@@ -292,7 +315,7 @@ def plot_footprint_coverage(poly, satellite="S2A"):
     plt.savefig(f"timeplot_{satellite.lower()}.png")
 
 
-def plot_cloud_coverage(poly):
+def plot_cloud_coverage(poly, plot_cloudbins=False, order_footprint=False):
     terms = {
         "platformname": "Sentinel-2",
         "producttype": "S2MSI2A",
@@ -302,14 +325,168 @@ def plot_cloud_coverage(poly):
 
     entries = SEARCH.search_terms(terms)
     metas = [SEARCH.parse_entry(e) for e in entries]
-    print(len(metas))
+
+    if plot_cloudbins:
+        # binning metas on cloudcover
+        binned_cloud = [
+            round(m["cloudcoverpercentage"] / 10) * 10 for m in metas]
+        cloud_counts = collections.Counter(binned_cloud)
+
+        bins = list(sorted(cloud_counts.keys()))
+        values = [cloud_counts[b] for b in bins]
+        ypos = list(range(len(bins)))
+        plt.bar(ypos, values)
+        plt.xticks(ypos, labels=bins)
+        plt.title("Cloud coverage in datasets intersecting with germany")
+        plt.xlabel("Cloud cover percentage")
+        plt.ylabel("Number of datasets")
+        plt.tight_layout()
+        plt.savefig(f"cloudbinned.png")
+
+    # groupby entries with same footprint
+    if order_footprint:
+        same_footprint = collections.defaultdict(list)
+        for meta in metas:
+            same_footprint[meta["footprint"]].append(meta)
+
+        for foot, group in same_footprint.items():
+            min_cloud = min(group, key=lambda m: m["cloudcoverpercentage"])
+            print(foot, min_cloud["cloudcoverpercentage"])
+
+    for perc in [10, 20, 30, 40, 50, 60, 70, 80, 90]:
+        low_cloud_meta = [
+            m for m in metas if m["cloudcoverpercentage"] <= perc]
+        export_meta_shapes_to_shapefile(
+            low_cloud_meta, f"shapefiles/low_cloud_{perc}")
 
 
 def download_data_test():
+    """Test downloading TCI images using the ODATA API."""
     odata = OData(COPERNICUS_USER, COPERNICUS_PASS)
     uuid = "e96bba40-33de-491b-b123-866f4e60bbca"
     path = odata.get_tci_image_path(uuid)
     odata.download(path, f"download/{uuid}_tci.jp2")
+
+
+def find_uniques(shapes, ids, rtree):
+    uniques = []
+    all_shapes = len(ids)
+    for i in ids:
+        done = round((i + 1) / all_shapes * 50)
+        intersects = rtree.intersection(shapes[i].bounds)
+        remaining = shapes[i]
+        unique = True
+        for is_id in intersects:
+            if i == is_id:
+                continue
+            remaining = remaining.difference(shapes[is_id])
+            if remaining.area == 0:
+                unique = False
+                break
+        if unique:
+            uniques.append(i)
+    return uniques
+
+
+def reduce_footprint_unique(shapes):
+    """Remove all footprints completely overlapping with shapes covering area
+    alone.
+    """
+
+    # construct rtree for faster intersections
+    rtree = ri.Index()
+    for i, shape in enumerate(shapes):
+        rtree.add(i, shape.bounds)
+
+    selected = list(range(len(shapes)))
+    uniques = find_uniques(shapes, selected, rtree)
+    while True:
+        is_areas = sorted(
+            [(i, shapes[i].area) for i in selected if i not in uniques],
+            key=lambda x: x[1], reverse=False)
+        print(len(is_areas))
+        if len(is_areas) == 0:
+            break
+        sel_index, _ = is_areas[0]
+        selected.remove(sel_index)
+        is_sel = list(rtree.intersection(shapes[i].bounds))
+        uniques += find_uniques(shapes, is_sel, rtree)
+
+    return uniques
+
+
+def inside_bounds(poly_inner, poly_outer):
+    bounds_inner = poly_inner.bounds
+    bounds_outer = poly_outer.bounds
+    return (
+        bounds_inner[0] >= bounds_outer[0]
+        and bounds_inner[1] >= bounds_outer[1]
+        and bounds_inner[2] <= bounds_outer[2]
+        and bounds_inner[3] <= bounds_outer[3]
+    )
+
+
+def split_bounds(bounds):
+    minx, miny, maxx, maxy = bounds.bounds
+    line_a = LineString(
+        (
+            (minx + ((maxx - minx) / 2), miny),
+            ((minx + ((maxx - minx) / 2), maxy))
+        )
+    )
+    line_b = LineString(
+        (
+            (minx, miny + ((maxy - miny) / 2)),
+            (maxx, (miny + ((maxy - miny) / 2)))
+        )
+    )
+    box_a, box_b = list(split(bounds, line_a).geoms)
+    box_aa, box_ab = list(split(box_a, line_b).geoms)
+    box_ba, box_bb = list(split(box_b, line_b).geoms)
+    return box_aa, box_ab, box_ba, box_bb
+
+
+def smallest_cover_set(poly):
+    """Test filtering entries down to smallest cover set for germany."""
+    terms = {
+        "platformname": "Sentinel-2",
+        "producttype": "S2MSI2A",
+        "footprint": f"\"Intersects({poly})\"",
+        # "cloudcoverpercentage": "0",
+    }
+    entries = SEARCH.search_terms(terms)
+    metas = [SEARCH.parse_entry(e) for e in entries]
+    print("All:", len(metas))
+
+    filtered = [m for m in metas if m["cloudcoverpercentage"] < 10]
+    print("Only <10% clouds:", len(filtered))
+
+    same_footprint = collections.defaultdict(list)
+    for meta in filtered:
+        same_footprint[meta["footprint"]].append(meta)
+
+    filtered = [
+        min(v, key=lambda m: m["cloudcoverpercentage"])
+        for v in same_footprint.values()
+    ]
+    print("Only same footprint:", len(filtered))
+
+    footprints = []
+    for meta in filtered:
+        poly = swkt.loads(meta["footprint"])
+        if isinstance(poly, MultiPolygon):
+            assert len(poly.geoms) == 1
+            footprints.extend(poly.geoms)
+        else:
+            footprints.append(poly)
+    ids = reduce_footprint_unique(footprints)
+    print(ids)
+    filtered = [m for i, m in enumerate(filtered) if i in ids]
+    print("Reduce based on uniques:", len(filtered))
+
+    sum_size = sum(parse_size(m["size"]) for m in filtered)
+    print("Summed data size", sum_size / 1000, "GB")
+
 
 
 def main():
@@ -323,7 +500,10 @@ def main():
     # plot_cloud_coverage(poly)
 
     ### Download satellite data
-    download_data_test()
+    # download_data_test()
+
+    ### Filtering data down to smallest cover set
+    smallest_cover_set(poly)
 
 
 if __name__ == "__main__":

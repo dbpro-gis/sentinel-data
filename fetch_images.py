@@ -1,3 +1,4 @@
+# noqa: E266
 """
 Search for satellite images in specified geographical area.
 
@@ -7,6 +8,8 @@ Search for satellite images in specified geographical area.
 4. Initiate download.
 """
 import os
+import sys
+import pathlib
 import datetime
 import collections
 import xml.etree.ElementTree as ET
@@ -26,6 +29,8 @@ requests_cache.install_cache("sentinel_cache")
 
 # Bounding box is defined by lon lat lon lat, imagine 4 lines
 BOUNDS_GERMANY = ["5.86442", "47.26543", "15.05078", "55.14777"]
+COPERNICUS_USER = os.environ["COPERNICUS_USER"]
+COPERNICUS_PASS = os.environ["COPERNICUS_PASS"]
 
 
 def bounds_to_points(bound_box):
@@ -47,6 +52,104 @@ def polygon_from_points(points):
 
 def polygon_from_bound_box(box):
     return polygon_from_points(bounds_to_points(box))
+
+
+def selectsingle(items):
+    items = list(items)
+    assert len(items) == 1, "Select from iterable with single item"
+    return items[0]
+
+
+def select_prod_builder(key):
+    def filterfun(items):
+        return selectsingle(filter(lambda i: key in i, items))
+    return filterfun
+
+
+class OData:
+    base_url = "https://scihub.copernicus.eu/dhus/odata/v1"
+    _ns = {
+        "a": "http://www.w3.org/2005/Atom",
+    }
+
+    def __init__(self, user, password):
+        self._user = user
+        self._password = password
+
+        self._session = requests.Session()
+
+    def request(self, path, params=None):
+        url = f"{self.base_url}/{path}"
+        req = self._session.get(
+            url, params=params, auth=(self._user, self._password))
+        if req.status_code != 200:
+            print(url)
+            print(req.text)
+            raise RuntimeError
+        return req.text
+
+    def request_nodes(self, path):
+        text = self.request(path)
+        tree = ET.fromstring(text)
+        filename_nodes = tree.findall(
+            ".//a:entry/a:title", namespaces=self._ns)
+        filenames = [n.text for n in filename_nodes]
+        return filenames
+
+    def product_filename(self, uuid):
+        path = f"Products('{uuid}')/Nodes"
+        filenames = self.request_nodes(path)
+        return filenames[0]
+
+    def metadata(self):
+        result = self.request("$metadata")
+        print(result)
+
+    def get_tci_image_path(self, uuid, path_elems=None):
+        if path_elems is None:
+            path_elems = [
+                ("Products", uuid),
+                ("Nodes", selectsingle),
+                ("Nodes", "GRANULE"),
+                ("Nodes", selectsingle),
+                ("Nodes", "IMG_DATA"),
+                ("Nodes", "R10m"),
+                ("Nodes", select_prod_builder("TCI")),
+            ]
+
+        parsed_path_elems = []
+        querypath = ""
+        for name, value in path_elems:
+            if not isinstance(value, str):
+                filterfun = value
+                filenames = self.request_nodes(querypath + "/Nodes")
+                value = filterfun(filenames)
+
+            parsed_path_elems.append((name, value))
+            querypath += f"/{name}('{value}')"
+
+        querypath += "/$value"
+        return querypath
+
+    def download(self, path, outpath):
+        url = f"{self.base_url}/{path}"
+        pathlib.Path(outpath).parent.mkdir(parents=True, exist_ok=True)
+        filename = pathlib.Path(outpath).name
+        with requests_cache.disabled():
+            with requests.get(url, stream=True, auth=(self._user, self._password)) as r:
+                r.raise_for_status()
+                total_length = int(r.headers.get('content-length'))
+                downloaded = 0
+                with open(outpath, "wb") as outfile:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        if chunk:
+                            outfile.write(chunk)
+                            downloaded += len(chunk)
+                            done = int(50 * downloaded / total_length)
+                            sys.stdout.write(
+                                f"\r{filename}: [{'=' * done}{' ' * (50-done)}]")
+                            sys.stdout.flush()
+        return path
 
 
 class OpenSearch:
@@ -138,6 +241,9 @@ class OpenSearch:
         return entries
 
 
+SEARCH = OpenSearch(COPERNICUS_USER, COPERNICUS_PASS)
+
+
 def export_meta_shapes_to_shapefile(metas, outpath):
     footcount = collections.Counter(m["footprint"] for m in metas)
     coords = []
@@ -155,24 +261,22 @@ def export_meta_shapes_to_shapefile(metas, outpath):
         shp.record("polygon2")
 
 
-def main():
-    user = os.environ["COPERNICUS_USER"]
-    password = os.environ["COPERNICUS_PASS"]
-    poly = polygon_from_bound_box(BOUNDS_GERMANY)
+def plot_footprint_coverage(poly, satellite="S2A"):
+    """Show footprint of single tiles and plot some statistics.
+    Geographical plots are created in qgis"""
 
-    search = OpenSearch(user, password)
     terms = {
         "platformname": "Sentinel-2",
-        "filename": "S2A_*",
+        "filename": f"{satellite}_*",
         "producttype": "S2MSI2A",
         "footprint": f"\"Intersects({poly})\"",
         # "cloudcoverpercentage": "0",
     }
-    entries = search.search_terms(terms)
-    metas = [search.parse_entry(e) for e in entries]
+    entries = SEARCH.search_terms(terms)
+    metas = [SEARCH.parse_entry(e) for e in entries]
 
     # create shapefiles
-    export_meta_shapes_to_shapefile(metas, "shapefiles/fucky")
+    export_meta_shapes_to_shapefile(metas, "shapefiles/{satellite.lower()}")
 
     # plot time
     times = collections.Counter([meta["beginposition"] for meta in metas])
@@ -181,22 +285,45 @@ def main():
     footcount = collections.Counter(m["footprint"] for m in sel_metas)
     print(footcount.most_common(1))
 
-    # res = search.search(create_query(terms), start=0, rows=1)
-    # entries = res["entries"]
-    # for entry in res["entries"]:
-    #     meta = search.parse_entry(entry)
-    #     print(meta)
-    # footprints = []
-    # for entry in entries:
-    #     meta = search.parse_entry(entry)
-    #     footprints.append(meta["footprint"])
-    # counts = collections.Counter(footprints)
-    # print(counts.most_common(3))
     plt.scatter(times.keys(), times.values(), s=1)
     plt.ylabel("Number of files")
     plt.xlabel("Acquisition time")
     plt.tight_layout()
-    plt.savefig("timeplot.png")
+    plt.savefig(f"timeplot_{satellite.lower()}.png")
+
+
+def plot_cloud_coverage(poly):
+    terms = {
+        "platformname": "Sentinel-2",
+        "producttype": "S2MSI2A",
+        "footprint": f"\"Intersects({poly})\"",
+        # "cloudcoverpercentage": "0",
+    }
+
+    entries = SEARCH.search_terms(terms)
+    metas = [SEARCH.parse_entry(e) for e in entries]
+    print(len(metas))
+
+
+def download_data_test():
+    odata = OData(COPERNICUS_USER, COPERNICUS_PASS)
+    uuid = "e96bba40-33de-491b-b123-866f4e60bbca"
+    path = odata.get_tci_image_path(uuid)
+    odata.download(path, f"download/{uuid}_tci.jp2")
+
+
+def main():
+    poly = polygon_from_bound_box(BOUNDS_GERMANY)
+
+    ### Plot footprint coverage for both satellites
+    # plot_footprint_coverage(poly, satellite="S2A")
+    # plot_footprint_coverage(poly, satellite="S2B")
+
+    ### Plot cloud cover using data from all satellites
+    # plot_cloud_coverage(poly)
+
+    ### Download satellite data
+    download_data_test()
 
 
 if __name__ == "__main__":

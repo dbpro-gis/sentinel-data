@@ -385,37 +385,6 @@ def reduce_footprint_unique(metas):
     return filtered
 
 
-def inside_bounds(poly_inner, poly_outer):
-    bounds_inner = poly_inner.bounds
-    bounds_outer = poly_outer.bounds
-    return (
-        bounds_inner[0] >= bounds_outer[0]
-        and bounds_inner[1] >= bounds_outer[1]
-        and bounds_inner[2] <= bounds_outer[2]
-        and bounds_inner[3] <= bounds_outer[3]
-    )
-
-
-def split_bounds(bounds):
-    minx, miny, maxx, maxy = bounds.bounds
-    line_a = LineString(
-        (
-            (minx + ((maxx - minx) / 2), miny),
-            ((minx + ((maxx - minx) / 2), maxy))
-        )
-    )
-    line_b = LineString(
-        (
-            (minx, miny + ((maxy - miny) / 2)),
-            (maxx, (miny + ((maxy - miny) / 2)))
-        )
-    )
-    box_a, box_b = list(split(bounds, line_a).geoms)
-    box_aa, box_ab = list(split(box_a, line_b).geoms)
-    box_ba, box_bb = list(split(box_b, line_b).geoms)
-    return box_aa, box_ab, box_ba, box_bb
-
-
 def smallest_cover_set(poly):
     """Test filtering entries down to smallest cover set for germany."""
     terms = {
@@ -458,6 +427,17 @@ def smallest_cover_set(poly):
 
 def generate_download_urls(metas):
     uuids = [m["uuid"] for m in metas]
+    paths = []
+    all_count = len(uuids)
+    for i, uuid in enumerate(uuids):
+        print(f"{i+1}/{all_count}", uuid)
+        path = ODATA.get_tci_image_path(uuid)
+        print(path)
+        paths.append(path)
+    with open("filepaths.txt", "w") as f:
+        for path in paths:
+            f.write(path)
+    return paths
 
 
 def main():

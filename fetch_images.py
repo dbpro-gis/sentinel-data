@@ -434,7 +434,7 @@ def generate_download_urls(metas):
         paths.append(path)
     with open("filepaths.txt", "w") as f:
         for path in paths:
-            f.write(path)
+            f.write(path + "\n")
     return paths
 
 

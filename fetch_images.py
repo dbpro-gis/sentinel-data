@@ -461,6 +461,7 @@ def generate_download_urls(metas):
 
 
 def main():
+    print("Hello World")
     poly = polygon_from_bound_box(BOUNDS_GERMANY)
 
     ### Plot footprint coverage for both satellites

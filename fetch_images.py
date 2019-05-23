@@ -17,11 +17,8 @@ import xml.etree.ElementTree as ET
 import requests
 import requests_cache
 
-import rtree.index as ri
-
 import shapefile
-from shapely.geometry import MultiPolygon, Polygon, LineString
-from shapely.ops import split
+from shapely.geometry import MultiPolygon
 import shapely.wkt as swkt
 
 import matplotlib
@@ -42,17 +39,6 @@ def bounds_to_points(bound_box):
     return [
         (lon1, lat1), (lon2, lat1), (lon2, lat2), (lon1, lat2), (lon1, lat1)
     ]
-
-
-def bounds_to_points_float(bound_box):
-    lon1, lat1, lon2, lat2 = bound_box
-    lon1, lat1, lon2, lat2 = float(lon1), float(lat1), float(lon2), float(lat2)
-    return [
-        (lon1, lat1), (lon2, lat1), (lon2, lat2), (lon1, lat2), (lon1, lat1)
-    ]
-
-
-POLY_GERMANY = bounds_to_points_float(BOUNDS_GERMANY)
 
 
 def create_query(terms):
@@ -175,6 +161,9 @@ class OData:
         return path
 
 
+ODATA = OData(COPERNICUS_USER, COPERNICUS_PASS)
+
+
 class OpenSearch:
 
     base_url = "https://scihub.copernicus.eu/dhus"
@@ -268,20 +257,18 @@ SEARCH = OpenSearch(COPERNICUS_USER, COPERNICUS_PASS)
 
 
 def export_meta_shapes_to_shapefile(metas, outpath):
-    footcount = collections.Counter(m["footprint"] for m in metas)
-    coords = []
-    for footprint in footcount:
-        polys = swkt.loads(footprint)
-        if "MultiPolygon" in str(type(polys)):
-            for poly in polys:
-                coords.append(list(poly.exterior.coords))
-        else:
-            coords.append(list(polys.exterior.coords))
-
     with shapefile.Writer(outpath) as shp:
         shp.field("name", "C")
-        shp.poly(coords)
-        shp.record("polygon2")
+        shp.field("cloudcover", "C")
+        for i, meta in enumerate(metas):
+            footprint = meta["footprint"]
+            polys = swkt.loads(meta["footprint"])
+            if isinstance(polys, MultiPolygon):
+                coords = [list(poly.exterior.coords) for poly in polys.geoms]
+            else:
+                coords = [list(polys.exterior.coords)]
+            shp.poly(coords)
+            shp.record(f"polygon{i}", meta["cloudcoverpercentage"])
 
 
 def plot_footprint_coverage(poly, satellite="S2A"):
@@ -368,51 +355,34 @@ def download_data_test():
     odata.download(path, f"download/{uuid}_tci.jp2")
 
 
-def find_uniques(shapes, ids, rtree):
-    uniques = []
-    all_shapes = len(ids)
-    for i in ids:
-        done = round((i + 1) / all_shapes * 50)
-        intersects = rtree.intersection(shapes[i].bounds)
-        remaining = shapes[i]
-        unique = True
-        for is_id in intersects:
-            if i == is_id:
-                continue
-            remaining = remaining.difference(shapes[is_id])
-            if remaining.area == 0:
-                unique = False
-                break
-        if unique:
-            uniques.append(i)
-    return uniques
-
-
-def reduce_footprint_unique(shapes):
+def reduce_footprint_unique(metas):
     """Remove all footprints completely overlapping with shapes covering area
     alone.
     """
+    metas = sorted(metas, key=lambda m: m["cloudcoverpercentage"])
+    shapes = []
+    for meta in metas:
+        poly = swkt.loads(meta["footprint"])
+        if isinstance(poly, MultiPolygon):
+            assert len(poly.geoms) == 1
+            shapes.extend(poly.geoms)
+        else:
+            shapes.append(poly)
 
-    # construct rtree for faster intersections
-    rtree = ri.Index()
+    selected = []
+    union_area = None
     for i, shape in enumerate(shapes):
-        rtree.add(i, shape.bounds)
+        if union_area is None:
+            union_area = shape
+            selected.append(i)
+        else:
+            prev_size = union_area.area
+            union_area = union_area.union(shape)
+            if prev_size < union_area.area:
+                selected.append(i)
 
-    selected = list(range(len(shapes)))
-    uniques = find_uniques(shapes, selected, rtree)
-    while True:
-        is_areas = sorted(
-            [(i, shapes[i].area) for i in selected if i not in uniques],
-            key=lambda x: x[1], reverse=False)
-        print(len(is_areas))
-        if len(is_areas) == 0:
-            break
-        sel_index, _ = is_areas[0]
-        selected.remove(sel_index)
-        is_sel = list(rtree.intersection(shapes[i].bounds))
-        uniques += find_uniques(shapes, is_sel, rtree)
-
-    return uniques
+    filtered = [metas[i] for i in selected]
+    return filtered
 
 
 def inside_bounds(poly_inner, poly_outer):
@@ -471,22 +441,23 @@ def smallest_cover_set(poly):
     ]
     print("Only same footprint:", len(filtered))
 
-    footprints = []
-    for meta in filtered:
-        poly = swkt.loads(meta["footprint"])
-        if isinstance(poly, MultiPolygon):
-            assert len(poly.geoms) == 1
-            footprints.extend(poly.geoms)
-        else:
-            footprints.append(poly)
-    ids = reduce_footprint_unique(footprints)
-    print(ids)
-    filtered = [m for i, m in enumerate(filtered) if i in ids]
+    filtered = reduce_footprint_unique(filtered)
     print("Reduce based on uniques:", len(filtered))
 
     sum_size = sum(parse_size(m["size"]) for m in filtered)
     print("Summed data size", sum_size / 1000, "GB")
+    avgcover = sum(m["cloudcoverpercentage"] for m in filtered)/len(filtered)
+    maxcover = max(m["cloudcoverpercentage"] for m in filtered)
+    print("Avg cloudcover:", avgcover, "Max cloud: ", maxcover)
 
+    export_meta_shapes_to_shapefile(
+        filtered, f"shapefiles/unique_set")
+
+    return filtered
+
+
+def generate_download_urls(metas):
+    uuids = [m["uuid"] for m in metas]
 
 
 def main():
@@ -503,7 +474,8 @@ def main():
     # download_data_test()
 
     ### Filtering data down to smallest cover set
-    smallest_cover_set(poly)
+    metas = smallest_cover_set(poly)
+    generate_download_urls(metas)
 
 
 if __name__ == "__main__":

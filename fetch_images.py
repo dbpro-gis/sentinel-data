@@ -91,10 +91,7 @@ class OData:
         url = f"{self.base_url}/{path}"
         req = self._session.get(
             url, params=params, auth=(self._user, self._password))
-        if req.status_code != 200:
-            print(url)
-            print(req.text)
-            raise RuntimeError
+        req.raise_for_status()
         return req.text
 
     def request_nodes(self, path):
@@ -114,17 +111,19 @@ class OData:
         result = self.request("$metadata")
         print(result)
 
-    def get_tci_image_path(self, uuid, path_elems=None):
-        if path_elems is None:
-            path_elems = [
-                ("Products", uuid),
-                ("Nodes", selectsingle),
-                ("Nodes", "GRANULE"),
-                ("Nodes", selectsingle),
-                ("Nodes", "IMG_DATA"),
-                ("Nodes", "R10m"),
-                ("Nodes", select_prod_builder("TCI")),
-            ]
+    def get_tci_image_path(self, uuid, filename):
+        fileparts = filename.split("_")
+        tci_name = f"{fileparts[5]}_{fileparts[2]}_TCI_10m.jp2"
+        path_elems = [
+            ("Products", uuid),
+            ("Nodes", filename),
+            ("Nodes", "GRANULE"),
+            ("Nodes", selectsingle),
+            ("Nodes", "IMG_DATA"),
+            ("Nodes", "R10m"),
+            # ("Nodes", select_prod_builder("TCI")),
+            ("Nodes", tci_name),
+        ]
 
         parsed_path_elems = []
         querypath = ""
@@ -426,13 +425,12 @@ def smallest_cover_set(poly):
 
 
 def generate_download_urls(metas):
-    uuids = [m["uuid"] for m in metas]
+    uuids = [(m["uuid"], m["filename"]) for m in metas]
     paths = []
     all_count = len(uuids)
-    for i, uuid in enumerate(uuids):
+    for i, (uuid, filename) in enumerate(uuids):
         print(f"{i+1}/{all_count}", uuid)
-        path = ODATA.get_tci_image_path(uuid)
-        print(path)
+        path = ODATA.get_tci_image_path(uuid, filename)
         paths.append(path)
     with open("filepaths.txt", "w") as f:
         for path in paths:
@@ -456,7 +454,6 @@ def main():
     ### Filtering data down to smallest cover set
     metas = smallest_cover_set(poly)
     generate_download_urls(metas)
-
 
 if __name__ == "__main__":
     main()

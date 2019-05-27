@@ -6,4 +6,5 @@ mkdir -p $outputdir
 for filename in $inputdir/*.jp2; do
 	name=$(basename $filename .jp2)
 	$BIN $filename $outputdir/$name.tif
+	break
 done

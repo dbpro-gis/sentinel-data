@@ -34,11 +34,76 @@ COPERNICUS_USER = os.environ["COPERNICUS_USER"]
 COPERNICUS_PASS = os.environ["COPERNICUS_PASS"]
 
 
+class linear_function:
+    m = 0
+    b = 0
+
+    def __init__(self, lon1, lat1, lon2, lat2):
+        self.lon1 = lon1
+        self.lat1 = lat1
+        self.lon2 = lon2
+        self.lat2 = lat2
+        self.m = (lat2-lat1) / (lon2-lon1)
+        self.b = lat2 - m * lon2
+
+    def intersect(self, line):
+        x = (self.b - line.b) / (self.m - line.m)
+        y = self.m * x + self.b        
+        if((x>=min(lon1,lon2)&&x<=max(lon1,lon2)) && (y>=min(lat1,lat2)&&y<=max(lat1,lat2))):
+            return (x, y)
+        
+            
+       
+
 def bounds_to_points(bound_box):
     lon1, lat1, lon2, lat2 = bound_box
     return [
         (lon1, lat1), (lon2, lat1), (lon2, lat2), (lon1, lat2), (lon1, lat1)
     ]
+
+def corine_class_in_area (bound_box_points, corine_data):
+    lon1, lat1, lon2, lat2 = bound_box
+
+    # 4 cases:
+    # 1 - corine class is 100% inside the box (no intersection between edges)
+    # 2 - corine class surrounds the box to 100% (no intersection between edges)
+    # 3 - intersection between edges 
+    # 4 - no match for the corine class
+
+    box_functions = [
+        linear_function(points[0][0],points[0][1],points[1][0],points[1][1]),
+        linear_function(points[1][0],points[1][1],points[2][0],points[2][1]),
+        linear_function(points[2][0],points[2][1],points[3][0],points[3][1]),
+        linear_function(points[3][0],points[3][1],points[0][0],points[0][1])
+    ]
+
+# going through every data set and each point in it -> if min one point is in our box then it matches with the corresponding corine class
+
+    i = 0
+    intersection = []
+    in_box_counter = 0
+    
+    while i < len(corine_data):
+        if( (corine_data[i][0]>= min(lon1,lon2) && corine_data[i][0] <= max(lon1,lon2)) && (corine_data[i][1]>= min(lat1,lat2) && corine_data[i][1] <= max(lat1,lat2))
+           in_box_counter += 1
+           
+           
+        if(i==(len(corine_data)-1)):
+            g = linear_function(corine_data[0][0],corine_data[0][1],corine_data[len(corine_data)-1][0],corine_data[len(corine_data)-1][1])
+            
+        else:
+            g = linear_function(corine_data[i][0],corine_data[i][1],corine_data[i+1][0],corine_data[i+1][1])
+           
+        for x in box_functions:
+            intersection.append(g.intersect(x))
+        
+        i += 1
+    if(len(intersection)==0 && in_box_counter < len(corine_data)):
+           # TODO: neither intersection nor completely in bound box -> cover other cases
+        
+        
+        
+
 
 
 def create_query(terms):

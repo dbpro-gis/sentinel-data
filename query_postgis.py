@@ -4,11 +4,12 @@ Create some simple postgres queries using python.
 from typing import List
 import os
 import psycopg2
+from rtree import index
 
+#POSTGIS_USER = os.environ["postgres"]
+#POSTGIS_PASSWORD = os.environ["dbprogis2019"]
 
-POSTGIS_USER = os.environ["PGUSER"]
-POSTGIS_PASSWORD = os.environ["PGPASSWORD"]
-
+idx = index.Index()
 
 class Geospatial:
     """Geospatial database inside of postgis."""
@@ -56,22 +57,39 @@ class Geospatial:
 def main():
     gs = Geospatial(
         "home.arsbrevis.de", port=31313,
-        password=POSTGIS_PASSWORD, user=POSTGIS_USER)
+        password="dbprogis2019", user="postgres")
 
-    # result = gs.query(
-    #     """SELECT r_table_name, ST_AsText(ST_Transform(extent, 4326))
-    #     FROM raster_columns""",
-    #     ("r_table_name", "bound")
-    # )
-
+     result = gs.query(
+         """SELECT srid, ST_AsText(ST_Transform(extent, 4326)) AS polygon
+         FROM raster_columns""",
+         ("r_table_name", "bound"))
+    
+     
     data = gs.query(
         """SELECT ST_AsPNG(rast)
         FROM t31tgn_20180925t104021_tci_10m LIMIT 1""",
         ("png",)
     )
+    
+    corine = gs.query("""SELECT gid, ST_AsText(ST_Transform(extent, 4326)) AS polygon FROM corinagermanydata""")
+    
+    idx = index.Index()
+    # containing srid with intersected corine gid
+    intersection_list = []
+    
+    for c in corine:
+        idx.insert(c.gid, c.polygon)
+        
+    for r in result:
+        corine_id = list(idx.intersection(r.polygon))
+        intersection_list.append(tuple((r.srid, corine_id)))
+        
+    
     picmemory = data["png"][0]
     with open("test.png", "wb") as f:
         f.write(picmemory)
+        
+   
 
     gs.close()
 

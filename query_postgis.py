@@ -6,7 +6,8 @@ import os
 import psycopg2
 
 
-POSTGIS_PASSWORD = os.environ["DBPRO_DB_PASSWORD"]
+POSTGIS_USER = os.environ["PGUSER"]
+POSTGIS_PASSWORD = os.environ["PGPASSWORD"]
 
 
 class Geospatial:
@@ -41,6 +42,10 @@ class Geospatial:
                 results[column].append(result[i])
         return results
 
+    def close(self):
+        self.cur.close()
+        self.conn.close()
+
     def __enter__(self):
         print("Entering")
 
@@ -50,18 +55,25 @@ class Geospatial:
 
 def main():
     gs = Geospatial(
-        "home.arsbrevis.de", port=31313, password=POSTGIS_PASSWORD)
+        "home.arsbrevis.de", port=31313,
+        password=POSTGIS_PASSWORD, user=POSTGIS_USER)
 
-    result = gs.query(
-        """SELECT r_table_name, ST_AsText(ST_Transform(extent, 4326))
-        FROM raster_columns""",
-        ("r_table_name", "bound")
+    # result = gs.query(
+    #     """SELECT r_table_name, ST_AsText(ST_Transform(extent, 4326))
+    #     FROM raster_columns""",
+    #     ("r_table_name", "bound")
+    # )
+
+    data = gs.query(
+        """SELECT ST_AsPNG(rast)
+        FROM t31tgn_20180925t104021_tci_10m LIMIT 1""",
+        ("png",)
     )
-    for table_name in result["r_table_name"]:
-        print(table_name)
-        with gs:
-            gs.cur.execute(f"DROP TABLE {table_name} CASCADE")
-    print(result)
+    picmemory = data["png"][0]
+    with open("test.png", "wb") as f:
+        f.write(picmemory)
+
+    gs.close()
 
 
 if __name__ == "__main__":

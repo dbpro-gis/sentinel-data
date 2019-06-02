@@ -1,14 +1,13 @@
+/*Create Geometry for raster elements in a single tile.*/
 /*
-Get a list of all raster tables.
-*/
-DROP TABLE (
-	SELECT r_table_name FROM raster_columns
-);
-
-/*
-SELECT ST_AsText(ST_Envelope(rast))
+SELECT ST_AsText(ST_Transform(ST_Envelope(rast), 4326))
 FROM t31tgn_20180925t104021_tci_10m;
 */
+
+/*Try to save single patches for the given one.*/
+SELECT write_file(ST_AsPNG(rast), '/tmp/slices/t31tgn_20180925t104021_tci_10m-p' || rid ||'.png')
+FROM t31tgn_20180925t104021_tci_10m;
+
 
 /*
 Count the number of 120x120 tiles in the given table.

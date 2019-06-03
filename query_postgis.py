@@ -3,7 +3,10 @@ Create some simple postgres queries using python.
 """
 from typing import List
 import os
+import datetime
+
 import psycopg2
+import pandas as pd
 
 
 POSTGIS_USER = os.environ["PGUSER"]
@@ -53,21 +56,32 @@ class Geospatial:
         self.conn.commit()
 
 
+def get_raster_tables(gs: Geospatial) -> pd.DataFrame:
+    result = gs.query(
+        """SELECT r_table_name, ST_AsText(ST_Transform(extent, 4326))
+        FROM raster_columns""",
+        ("r_table_name", "bound")
+    )
+
+    result["date"] = []
+    for name in result["r_table_name"]:
+        datestr = name.split("_")[1]
+        date = datetime.datetime.strptime(datestr, "%Y%m%dt%H%M%S")
+        result["date"].append(date)
+    return pd.DataFrame.from_dict(result)
+
+
 def main():
     gs = Geospatial(
         "home.arsbrevis.de", port=31313,
         password=POSTGIS_PASSWORD, user=POSTGIS_USER)
 
-    # result = gs.query(
-    #     """SELECT r_table_name, ST_AsText(ST_Transform(extent, 4326))
-    #     FROM raster_columns""",
-    #     ("r_table_name", "bound")
-    # )
+    dataset = get_raster_tables(gs)
 
     data = gs.query(
-        """SELECT ST_AsPNG(rast)
+        """SELECT rid, ST_AsPNG(rast), ST_AsText(ST_Transform(ST_Envelope(rast), 4326))
         FROM t31tgn_20180925t104021_tci_10m LIMIT 1""",
-        ("png",)
+        ("rid", "png", "geom")
     )
     picmemory = data["png"][0]
     with open("test.png", "wb") as f:

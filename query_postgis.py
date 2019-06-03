@@ -3,6 +3,7 @@ Create some simple postgres queries using python.
 """
 from typing import List
 import os
+import json
 import datetime
 
 import psycopg2
@@ -56,18 +57,31 @@ class Geospatial:
         self.conn.commit()
 
 
-def get_raster_tables(gs: Geospatial) -> pd.DataFrame:
+def get_raster_tables(gs: Geospatial, metadata: str) -> pd.DataFrame:
     result = gs.query(
         """SELECT r_table_name, ST_AsText(ST_Transform(extent, 4326))
         FROM raster_columns""",
         ("r_table_name", "bound")
     )
 
+    with open(metadata) as mfile:
+        metas = json.load(mfile)
+
+    tci_meta = {}
+    for meta in metas:
+        tci_name = meta["tciname"].rstrip(".jp2").lower()
+        tci_meta[tci_name] = meta
+
     result["date"] = []
+    result["cloudcover"] = []
+    result["snowcover"] = []
     for name in result["r_table_name"]:
         datestr = name.split("_")[1]
         date = datetime.datetime.strptime(datestr, "%Y%m%dt%H%M%S")
         result["date"].append(date)
+        meta = tci_meta[name]
+        result["cloudcover"].append(meta["cloudcoverpercentage"])
+        result["snowcover"].append(meta["snowicepercentage"])
     return pd.DataFrame.from_dict(result)
 
 
@@ -76,7 +90,8 @@ def main():
         "home.arsbrevis.de", port=31313,
         password=POSTGIS_PASSWORD, user=POSTGIS_USER)
 
-    dataset = get_raster_tables(gs)
+    dataset = get_raster_tables(gs, "metadata.json")
+    print(dataset)
 
     data = gs.query(
         """SELECT rid, ST_AsPNG(rast), ST_AsText(ST_Transform(ST_Envelope(rast), 4326))

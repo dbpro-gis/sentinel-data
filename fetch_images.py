@@ -9,6 +9,7 @@ Search for satellite images in specified geographical area.
 """
 import os
 import sys
+import json
 import pathlib
 import datetime
 import collections
@@ -424,7 +425,7 @@ def smallest_cover_set(poly):
     return filtered
 
 
-def generate_download_urls(metas):
+def generate_download_urls(metas, outfile="filepaths.txt"):
     uuids = [(m["uuid"], m["filename"]) for m in metas]
     paths = []
     all_count = len(uuids)
@@ -432,10 +433,29 @@ def generate_download_urls(metas):
         print(f"{i+1}/{all_count}", uuid)
         path = ODATA.get_tci_image_path(uuid, filename)
         paths.append(path)
-    with open("filepaths.txt", "w") as f:
-        for path in paths:
-            f.write(path + "\n")
+    if outfile:
+        with open(outfile, "w") as f:
+            for path in paths:
+                f.write(path + "\n")
     return paths
+
+
+def filename_to_tci_name(filename):
+    fileparts = filename.split("_")
+    tci_name = f"{fileparts[5]}_{fileparts[2]}_TCI_10m.jp2"
+    return tci_name
+
+
+def save_metadata(metas, outfile):
+    for i, meta in enumerate(metas):
+        meta["tciname"] = filename_to_tci_name(meta["filename"])
+        for k, v in meta.items():
+            if isinstance(v, datetime.datetime):
+                meta[k] = v.isoformat()
+
+    if outfile:
+        with open(outfile, "w") as f:
+            json.dump(metas, f)
 
 
 def main():
@@ -453,7 +473,8 @@ def main():
 
     ### Filtering data down to smallest cover set
     metas = smallest_cover_set(poly)
-    generate_download_urls(metas)
+    # paths = generate_download_urls(metas)
+    save_metadata(metas, "metadata.json")
 
 if __name__ == "__main__":
     main()

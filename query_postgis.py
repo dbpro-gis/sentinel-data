@@ -9,10 +9,15 @@ import datetime
 import psycopg2
 import pandas as pd
 
+from rtree import index
+from shapely.wkt import loads
 
-POSTGIS_USER = os.environ["PGUSER"]
-POSTGIS_PASSWORD = os.environ["PGPASSWORD"]
+idx = index.Index()
 
+# TODO: VISUALIZATION: FETCH IMAGES WITH JAVASCRIPT
+
+#POSTGIS_USER = os.environ["postgres"]
+#POSTGIS_PASSWORD = os.environ["dbprogis2019"]
 
 class Geospatial:
     """Geospatial database inside of postgis."""
@@ -84,11 +89,41 @@ def get_raster_tables(gs: Geospatial, metadata: str) -> pd.DataFrame:
         result["snowcover"].append(meta["snowicepercentage"])
     return pd.DataFrame.from_dict(result)
 
-
+class Corine:
+    def __init__(self, gs):
+        corine = gs.query("""SELECT code_18, ST_Transform(geom, 4326) AS polygon FROM corinagermanydata""")
+        idx = index.Index()
+        
+        for c in corine:            
+            poly = loads(c[1]).wkt
+            idx.insert(c[0], poly)
+            bounds = poly.bounds
+   
+    def intersect(self, tile):     
+        # GENERAL INTERSECTION WITH BOUNDS 
+        intersection_list = []
+        corine_classes = list(idx.intersection(tile))
+        
+        # FURTHER INTERSECTION WITH POLYGONS
+        for cc in corine_classes
+            for c in corine: 
+                if(c[0]==cc)
+                    poly = loads(c[1]).wkt
+                    intersectpart = tile.intersection(poly)
+                    poly_area = poly.area
+                    intersectpart_area = intersectpart.area
+                    fraction = intersectpart_area / poly_area
+                    intersection_list.append((c[0], fraction))
+                    
+        # RETURN LIST WITH TUPLES (CORINECLASS WITH FRACTION IN PERCENTAGE)         
+        return intersection_list 
+      
+        
+        
 def main():
     gs = Geospatial(
         "home.arsbrevis.de", port=31313,
-        password=POSTGIS_PASSWORD, user=POSTGIS_USER)
+        password="dbprogis2019", user="postgres")
 
     dataset = get_raster_tables(gs, "metadata.json")
     print(dataset)
@@ -103,6 +138,12 @@ def main():
         f.write(picmemory)
 
     gs.close()
+    
+    
+    
+    # INPUT PARAMETER FOR INTERSECTION: CERTAIN TILE (BOUNDING BOX) -> OUTPUT:  LIST WITH CORINE CLASS + PERCENTAGE OF INTERSECTION
+    cori = Corine(gs)
+    cori.intersect(tile)
 
 
 if __name__ == "__main__":

@@ -149,16 +149,36 @@ def export_images_dataset(outdir):
         password=POSTGIS_PASSWORD, user=POSTGIS_USER)
 
     cori = Corine(gs)
-    # dataset = get_raster_tables(gs, "metadata.json")
+    dataset = get_raster_tables(gs, "metadata.json")
+    tile_metadata = []
+    for _, row in dataset.iterrows():
+        name = row["r_table_name"]
+        print(row)
+        data = gs.query(
+            f"""SELECT rid, ST_AsPNG(rast), ST_AsText(ST_Transform(ST_Envelope(rast), 4326))
+            FROM {name}""",
+            ("rid", "png", "geom")
+        )
+        for i, rid in enumerate(data["rid"]):
+            tile_name = f"{name}_T{rid}"
+            shape = loads(data["geom"][i])
+            corine_classes = cori.intersect(shape)
+            with open(str(outdir / f"{tile_name}.png"), "wb") as handle:
+                handle.write(data["png"][i])
+            tile_metadata.append(
+                {
+                    "name": tile_name,
+                    "geom": data["geom"][i],
+                    "date": row["date"],
+                    "snowcover": row["snowcover"],
+                    "cloudcover": row["cloudcover"],
+                    "corine_classes": corine_classes,
+                    "max_class": max(corine_classes, key=lambda c: c[2])
+                }
+            )
 
-    # data = gs.query(
-    #     """SELECT rid, ST_AsPNG(rast), ST_AsText(ST_Transform(ST_Envelope(rast), 4326))
-    #     FROM t31tgn_20180925t104021_tci_10m LIMIT 1""",
-    #     ("rid", "png", "geom")
-    # )
-    # picmemory = data["png"][0]
-    # with open("test.png", "wb") as f:
-    #     f.write(picmemory)
+    with open(str(outdir / "meta.json"), "w") as handle:
+        json.dump(tile_metadata, handle)
 
     cori.close()
     gs.close()

@@ -1,14 +1,21 @@
 """
 Create some simple postgres queries using python.
 """
-from typing import List
+from __future__ import annotations
+from typing import List, Tuple
 import os
 import json
+import pathlib
 import datetime
 
 import psycopg2
 import pandas as pd
 
+from rtree import index
+from shapely.geometry import Polygon
+from shapely.wkt import loads
+
+# TODO: VISUALIZATION: FETCH IMAGES WITH JAVASCRIPT
 
 POSTGIS_USER = os.environ["PGUSER"]
 POSTGIS_PASSWORD = os.environ["PGPASSWORD"]
@@ -85,6 +92,55 @@ def get_raster_tables(gs: Geospatial, metadata: str) -> pd.DataFrame:
     return pd.DataFrame.from_dict(result)
 
 
+class Corine:
+    def __init__(
+            self,
+            gs: Geospatial = None,
+            index_name: str = "corine",
+            force_reload: bool = False):
+        # self._idx = index.Index(index_name)
+        self._idx = index.Index()
+        if not pathlib.Path(f"{index_name}.idx").exists() or force_reload:
+            self._load_corine(gs)
+
+    def _load_corine(self, gs: Geospatial):
+        self._corine = gs.query(
+            """SELECT id, code_18, ST_AsText(ST_Transform(geom, 4326))
+            FROM corinagermanydata LIMIT 10""", ("id", "code_18", "polygon"))
+        print(self._corine)
+        self._corine["shapes"] = []
+
+        for i, corine_id in enumerate(self._corine["id"]):
+            poly = loads(self._corine["polygon"][i])
+            self._idx.insert(i, poly.bounds)
+            self._corine["shapes"].append(poly)
+
+    def close(self):
+        self._idx.close()
+
+    def intersect(self, shape: Polygon) -> List[Tuple[str, str, float]]:
+        """Intersect the given shape against the corine dataset and return
+        list of labels and their area ratios.
+        """
+        intersections = []
+        shape_area = shape.area
+        # GENERAL INTERSECTION WITH BOUNDS
+        for is_id in self._idx.intersection(shape.bounds):
+            corine_shape = self._corine["shapes"][is_id]
+            is_area = shape.intersection(corine_shape).area
+            if is_area > 0:
+                ratio = is_area / shape_area
+                intersections.append(
+                    (
+                        self._corine["id"][is_id],
+                        self._corine["code_18"][is_id],
+                        ratio
+                    )
+                )
+
+        return intersections
+
+
 def main():
     gs = Geospatial(
         "home.arsbrevis.de", port=31313,
@@ -102,6 +158,13 @@ def main():
     with open("test.png", "wb") as f:
         f.write(picmemory)
 
+    # Test corine implementation
+    cori = Corine(gs, force_reload=True)
+    testgeom = Polygon([(11, 47), (12, 47), (12, 48), (11, 48), (11, 47)])
+    res = cori.intersect(testgeom)
+    print(res)
+
+    cori.close()
     gs.close()
 
 

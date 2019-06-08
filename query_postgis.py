@@ -106,7 +106,7 @@ class Corine:
     def _load_corine(self, gs: Geospatial):
         self._corine = gs.query(
             """SELECT id, code_18, ST_AsText(ST_Transform(geom, 4326))
-            FROM corinagermanydata LIMIT 10""", ("id", "code_18", "polygon"))
+            FROM corinagermanydata""", ("id", "code_18", "polygon"))
         print(self._corine)
         self._corine["shapes"] = []
 
@@ -141,31 +141,33 @@ class Corine:
         return intersections
 
 
-def main():
+def export_images_dataset(outdir):
+    outdir = pathlib.Path(outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+
     gs = Geospatial(
         "home.arsbrevis.de", port=31313,
         password=POSTGIS_PASSWORD, user=POSTGIS_USER)
 
-    dataset = get_raster_tables(gs, "metadata.json")
-    print(dataset)
-
-    data = gs.query(
-        """SELECT rid, ST_AsPNG(rast), ST_AsText(ST_Transform(ST_Envelope(rast), 4326))
-        FROM t31tgn_20180925t104021_tci_10m LIMIT 1""",
-        ("rid", "png", "geom")
-    )
-    picmemory = data["png"][0]
-    with open("test.png", "wb") as f:
-        f.write(picmemory)
-
-    # Test corine implementation
     cori = Corine(gs, force_reload=True)
-    testgeom = Polygon([(11, 47), (12, 47), (12, 48), (11, 48), (11, 47)])
-    res = cori.intersect(testgeom)
-    print(res)
+    # dataset = get_raster_tables(gs, "metadata.json")
+
+    # data = gs.query(
+    #     """SELECT rid, ST_AsPNG(rast), ST_AsText(ST_Transform(ST_Envelope(rast), 4326))
+    #     FROM t31tgn_20180925t104021_tci_10m LIMIT 1""",
+    #     ("rid", "png", "geom")
+    # )
+    # picmemory = data["png"][0]
+    # with open("test.png", "wb") as f:
+    #     f.write(picmemory)
 
     cori.close()
     gs.close()
+
+
+def main():
+    export_images_dataset("sentinel-dataset")
+
 
 
 if __name__ == "__main__":

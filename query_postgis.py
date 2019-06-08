@@ -1,23 +1,25 @@
 """
 Create some simple postgres queries using python.
 """
-from typing import List
+from __future__ import annotations
+from typing import List, Tuple
 import os
 import json
+import pathlib
 import datetime
 
 import psycopg2
 import pandas as pd
 
 from rtree import index
+from shapely.geometry import Polygon
 from shapely.wkt import loads
-
-idx = index.Index()
 
 # TODO: VISUALIZATION: FETCH IMAGES WITH JAVASCRIPT
 
-#POSTGIS_USER = os.environ["postgres"]
-#POSTGIS_PASSWORD = os.environ["dbprogis2019"]
+POSTGIS_USER = os.environ["PGUSER"]
+POSTGIS_PASSWORD = os.environ["PGPASSWORD"]
+
 
 class Geospatial:
     """Geospatial database inside of postgis."""
@@ -89,41 +91,60 @@ def get_raster_tables(gs: Geospatial, metadata: str) -> pd.DataFrame:
         result["snowcover"].append(meta["snowicepercentage"])
     return pd.DataFrame.from_dict(result)
 
+
 class Corine:
-    def __init__(self, gs):
-        corine = gs.query("""SELECT code_18, ST_Transform(geom, 4326) AS polygon FROM corinagermanydata""")
-        idx = index.Index()
-        
-        for c in corine:            
-            poly = loads(c[1]).wkt
-            idx.insert(c[0], poly)
-            bounds = poly.bounds
-   
-    def intersect(self, tile):     
-        # GENERAL INTERSECTION WITH BOUNDS 
-        intersection_list = []
-        corine_classes = list(idx.intersection(tile))
-        
-        # FURTHER INTERSECTION WITH POLYGONS
-        for cc in corine_classes
-            for c in corine: 
-                if(c[0]==cc)
-                    poly = loads(c[1]).wkt
-                    intersectpart = tile.intersection(poly)
-                    poly_area = poly.area
-                    intersectpart_area = intersectpart.area
-                    fraction = intersectpart_area / poly_area
-                    intersection_list.append((c[0], fraction))
-                    
-        # RETURN LIST WITH TUPLES (CORINECLASS WITH FRACTION IN PERCENTAGE)         
-        return intersection_list 
-      
-        
-        
+    def __init__(
+            self,
+            gs: Geospatial = None,
+            index_name: str = "corine",
+            force_reload: bool = False):
+        # self._idx = index.Index(index_name)
+        self._idx = index.Index()
+        if not pathlib.Path(f"{index_name}.idx").exists() or force_reload:
+            self._load_corine(gs)
+
+    def _load_corine(self, gs: Geospatial):
+        self._corine = gs.query(
+            """SELECT id, code_18, ST_AsText(ST_Transform(geom, 4326))
+            FROM corinagermanydata LIMIT 10""", ("id", "code_18", "polygon"))
+        print(self._corine)
+        self._corine["shapes"] = []
+
+        for i, corine_id in enumerate(self._corine["id"]):
+            poly = loads(self._corine["polygon"][i])
+            self._idx.insert(i, poly.bounds)
+            self._corine["shapes"].append(poly)
+
+    def close(self):
+        self._idx.close()
+
+    def intersect(self, shape: Polygon) -> List[Tuple[str, str, float]]:
+        """Intersect the given shape against the corine dataset and return
+        list of labels and their area ratios.
+        """
+        intersections = []
+        shape_area = shape.area
+        # GENERAL INTERSECTION WITH BOUNDS
+        for is_id in self._idx.intersection(shape.bounds):
+            corine_shape = self._corine["shapes"][is_id]
+            is_area = shape.intersection(corine_shape).area
+            if is_area > 0:
+                ratio = is_area / shape_area
+                intersections.append(
+                    (
+                        self._corine["id"][is_id],
+                        self._corine["code_18"][is_id],
+                        ratio
+                    )
+                )
+
+        return intersections
+
+
 def main():
     gs = Geospatial(
         "home.arsbrevis.de", port=31313,
-        password="dbprogis2019", user="postgres")
+        password=POSTGIS_PASSWORD, user=POSTGIS_USER)
 
     dataset = get_raster_tables(gs, "metadata.json")
     print(dataset)
@@ -137,13 +158,14 @@ def main():
     with open("test.png", "wb") as f:
         f.write(picmemory)
 
+    # Test corine implementation
+    cori = Corine(gs, force_reload=True)
+    testgeom = Polygon([(11, 47), (12, 47), (12, 48), (11, 48), (11, 47)])
+    res = cori.intersect(testgeom)
+    print(res)
+
+    cori.close()
     gs.close()
-    
-    
-    
-    # INPUT PARAMETER FOR INTERSECTION: CERTAIN TILE (BOUNDING BOX) -> OUTPUT:  LIST WITH CORINE CLASS + PERCENTAGE OF INTERSECTION
-    cori = Corine(gs)
-    cori.intersect(tile)
 
 
 if __name__ == "__main__":

@@ -45,6 +45,14 @@ class Geospatial:
         table_names = [t for t, in self.cur.fetchall()]
         return table_names
 
+    def query_iterator(self, query, columns):
+        self.cur.execute(query)
+        while True:
+            result = self.cur.fetchone()
+            if result is None:
+                break
+            yield dict(zip(columns, result))
+
     def query(self, query, columns):
         self.cur.execute(query)
         results = {col: [] for col in columns}
@@ -98,15 +106,21 @@ class Corine:
             gs: Geospatial = None,
             index_name: str = "corine",
             force_reload: bool = False):
-        # self._idx = index.Index(index_name)
-        self._idx = index.Index()
         if not pathlib.Path(f"{index_name}.idx").exists() or force_reload:
-            self._load_corine(gs)
+            self._idx = index.Index(index_name)
+            self._load_corine(gs, index_name)
+        else:
+            with open(f"{index_name}.json", "r") as handle:
+                self._corine = json.load(handle)
+            self._corine["shapes"] = [loads(p) for p in self._corine["polygon"]]
+            self._idx = index.Index(index_name)
 
-    def _load_corine(self, gs: Geospatial):
+    def _load_corine(self, gs: Geospatial, index_name):
         self._corine = gs.query(
             """SELECT id, code_18, ST_AsText(ST_Transform(geom, 4326))
             FROM corinagermanydata""", ("id", "code_18", "polygon"))
+        with open(f"{index_name}.json", "w") as handle:
+            json.dump(self._corine, handle)
         self._corine["shapes"] = []
 
         for i, corine_id in enumerate(self._corine["id"]):
@@ -145,40 +159,50 @@ def export_images_dataset(outdir):
     outdir.mkdir(parents=True, exist_ok=True)
 
     gs = Geospatial(
-        "home.arsbrevis.de", port=31313,
+        "127.0.0.1", port=31313,
         password=POSTGIS_PASSWORD, user=POSTGIS_USER)
 
     cori = Corine(gs)
     dataset = get_raster_tables(gs, "metadata.json")
     tile_metadata = []
+    failed = []
     for _, row in dataset.iterrows():
         name = row["r_table_name"]
         print(row)
-        data = gs.query(
+        query = gs.query_iterator(
             f"""SELECT rid, ST_AsPNG(rast), ST_AsText(ST_Transform(ST_Envelope(rast), 4326))
             FROM {name}""",
             ("rid", "png", "geom")
         )
-        for i, rid in enumerate(data["rid"]):
-            tile_name = f"{name}_T{rid}"
-            shape = loads(data["geom"][i])
+        for rast in query:
+            print(rast)
+            tile_name = f"{name}_T{rast['rid']}"
+            shape = loads(rast["geom"])
             corine_classes = cori.intersect(shape)
-            with open(str(outdir / f"{tile_name}.png"), "wb") as handle:
-                handle.write(data["png"][i])
-            tile_metadata.append(
-                {
-                    "name": tile_name,
-                    "geom": data["geom"][i],
-                    "date": row["date"],
-                    "snowcover": row["snowcover"],
-                    "cloudcover": row["cloudcover"],
-                    "corine_classes": corine_classes,
-                    "max_class": max(corine_classes, key=lambda c: c[2])
-                }
-            )
+            if corine_classes:
+                print(corine_classes)
+                with open(str(outdir / f"{tile_name}.png"), "wb") as handle:
+                    handle.write(rast["png"])
+                tile_metadata.append(
+                    {
+                        "name": tile_name,
+                        "geom": rast["geom"],
+                        "date": row["date"],
+                        "snowcover": row["snowcover"],
+                        "cloudcover": row["cloudcover"],
+                        "corine_classes": corine_classes,
+                        "max_class": max(corine_classes, key=lambda c: c[2])
+                    }
+                )
+            else:
+                failed.append({"name": tile_name, "geom": rast["geom"]})
+            print("--------")
 
     with open(str(outdir / "meta.json"), "w") as handle:
         json.dump(tile_metadata, handle)
+
+    with open(str(outdir / "failed.json"), "w") as handle:
+        json.dump(failed, handle)
 
     cori.close()
     gs.close()

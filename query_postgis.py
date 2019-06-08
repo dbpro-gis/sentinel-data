@@ -107,7 +107,6 @@ class Corine:
         self._corine = gs.query(
             """SELECT id, code_18, ST_AsText(ST_Transform(geom, 4326))
             FROM corinagermanydata""", ("id", "code_18", "polygon"))
-        print(self._corine)
         self._corine["shapes"] = []
 
         for i, corine_id in enumerate(self._corine["id"]):
@@ -149,7 +148,7 @@ def export_images_dataset(outdir):
         "home.arsbrevis.de", port=31313,
         password=POSTGIS_PASSWORD, user=POSTGIS_USER)
 
-    cori = Corine(gs, force_reload=True)
+    cori = Corine(gs)
     # dataset = get_raster_tables(gs, "metadata.json")
 
     # data = gs.query(

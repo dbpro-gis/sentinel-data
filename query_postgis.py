@@ -164,7 +164,6 @@ def export_images_dataset(outdir):
 
     cori = Corine(gs)
     dataset = get_raster_tables(gs, "metadata.json")
-    tile_metadata = []
     failed = []
     for _, row in dataset.iterrows():
         name = row["r_table_name"]
@@ -174,6 +173,7 @@ def export_images_dataset(outdir):
             FROM {name}""",
             ("rid", "png", "geom")
         )
+        tile_metadata = []
         for rast in query:
             print(rast)
             tile_name = f"{name}_T{rast['rid']}"
@@ -181,8 +181,10 @@ def export_images_dataset(outdir):
             corine_classes = cori.intersect(shape)
             if corine_classes:
                 print(corine_classes)
-                with open(str(outdir / f"{tile_name}.png"), "wb") as handle:
-                    handle.write(rast["png"])
+                filepath = outdir / f"{tile_name}.png"
+                if not filepath.exists():
+                    with open(str(filepath), "wb") as handle:
+                        handle.write(rast["png"])
                 tile_metadata.append(
                     {
                         "name": tile_name,
@@ -198,11 +200,11 @@ def export_images_dataset(outdir):
                 failed.append({"name": tile_name, "geom": rast["geom"]})
             print("--------")
 
-    with open(str(outdir / "meta.json"), "w") as handle:
-        json.dump(tile_metadata, handle)
+        with open(str(outdir / f"{name}.json"), "w") as handle:
+            json.dump(tile_metadata, handle)
 
-    with open(str(outdir / "failed.json"), "w") as handle:
-        json.dump(failed, handle)
+        with open(str(outdir / "{name}_failed.json"), "w") as handle:
+            json.dump(failed, handle)
 
     cori.close()
     gs.close()

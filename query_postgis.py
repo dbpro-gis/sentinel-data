@@ -189,7 +189,7 @@ def export_images_dataset(outdir):
                     {
                         "name": tile_name,
                         "geom": rast["geom"],
-                        "date": row["date"],
+                        "date": row["date"].isoformat(),
                         "snowcover": row["snowcover"],
                         "cloudcover": row["cloudcover"],
                         "corine_classes": corine_classes,
@@ -203,7 +203,7 @@ def export_images_dataset(outdir):
         with open(str(outdir / f"{name}.json"), "w") as handle:
             json.dump(tile_metadata, handle)
 
-        with open(str(outdir / "{name}_failed.json"), "w") as handle:
+        with open(str(outdir / f"{name}_failed.json"), "w") as handle:
             json.dump(failed, handle)
 
     cori.close()

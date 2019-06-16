@@ -425,6 +425,39 @@ def smallest_cover_set(poly):
     return filtered
 
 
+def very_selective(poly):
+    """Test filtering entries down to smallest cover set for germany."""
+    terms = {
+        "platformname": "Sentinel-2",
+        "producttype": "S2MSI2A",
+        "footprint": f"\"Intersects({poly})\"",
+        # "cloudcoverpercentage": "0.1",
+        # "snowicepercentage": "0.1",
+        # "waterpercentage": "20.0",
+    }
+    entries = SEARCH.search_terms(terms)
+    metas = [SEARCH.parse_entry(e) for e in entries]
+    print("All:", len(metas))
+
+    low_cloud = [m for m in metas if m["cloudcoverpercentage"] < 0.1]
+    print("Cloud:", len(low_cloud))
+    low_snow = [m for m in low_cloud if m["snowicepercentage"] < 0.1]
+    print("Snow:", len(low_snow))
+    low_water = [m for m in low_snow if m["waterpercentage"] < 20]
+    print("Water:", len(low_water))
+
+    final_2018 = [m for m in low_water if m["beginposition"].year == 2018]
+    print("2018:", len(final_2018))
+    final_2019 = [m for m in low_water if m["beginposition"].year == 2019]
+    print("2019:", len(final_2019))
+
+
+    # export_meta_shapes_to_shapefile(
+    #     filtered, f"shapefiles/unique_set")
+
+    return metas
+
+
 def generate_download_urls(metas, outfile="filepaths.txt"):
     uuids = [(m["uuid"], m["filename"]) for m in metas]
     paths = []
@@ -461,6 +494,8 @@ def save_metadata(metas, outfile):
 def main():
     poly = polygon_from_bound_box(BOUNDS_GERMANY)
 
+    very_selective(poly)
+
     ### Plot footprint coverage for both satellites
     # plot_footprint_coverage(poly, satellite="S2A")
     # plot_footprint_coverage(poly, satellite="S2B")
@@ -472,9 +507,9 @@ def main():
     # download_data_test()
 
     ### Filtering data down to smallest cover set
-    metas = smallest_cover_set(poly)
+    # metas = smallest_cover_set(poly)
     # paths = generate_download_urls(metas)
-    save_metadata(metas, "metadata.json")
+    # save_metadata(metas, "metadata.json")
 
 if __name__ == "__main__":
     main()

@@ -12,7 +12,8 @@ import psycopg2
 import pandas as pd
 
 from rtree import index
-from shapely.geometry import Polygon
+import shapefile
+from shapely.geometry import Polygon, MultiPolygon
 from shapely.wkt import loads
 
 # TODO: VISUALIZATION: FETCH IMAGES WITH JAVASCRIPT
@@ -90,6 +91,8 @@ def get_raster_tables(gs: Geospatial, metadata: str) -> pd.DataFrame:
     result["date"] = []
     result["cloudcover"] = []
     result["snowcover"] = []
+    result["waterpercentage"] = []
+    result["footprint"] = []
     for name in result["r_table_name"]:
         datestr = name.split("_")[1]
         date = datetime.datetime.strptime(datestr, "%Y%m%dt%H%M%S")
@@ -97,6 +100,8 @@ def get_raster_tables(gs: Geospatial, metadata: str) -> pd.DataFrame:
         meta = tci_meta[name]
         result["cloudcover"].append(meta["cloudcoverpercentage"])
         result["snowcover"].append(meta["snowicepercentage"])
+        result["waterpercentage"].append(meta["waterpercentage"])
+        result["footprint"].append(meta["footprint"])
     return pd.DataFrame.from_dict(result)
 
 
@@ -165,12 +170,45 @@ def export_images_dataset(outdir):
     cori = Corine(gs)
     dataset = get_raster_tables(gs, "metadata.json")
     failed = []
+    filtered_out = 0
+
+    shp = shapefile.Writer("testbounds.shp")
+    shp.field("name", "C")
+    shp.field("type", "C")
+
     for _, row in dataset.iterrows():
         name = row["r_table_name"]
-        print(row)
+        if row["cloudcover"] > 1.0:
+            filtered_out += 1
+            continue
+        if row["snowcover"] > 1.0:
+            filtered_out += 1
+            continue
+        if row["waterpercentage"] > 10.0:
+            filtered_out += 1
+            continue
+        # print(row["footprint"], row["bound"])
+        # polys = loads(row["footprint"])
+        # if isinstance(polys, MultiPolygon):
+        #     coords = [list(poly.exterior.coords) for poly in polys.geoms]
+        # else:
+        #     coords = [list(polys.exterior.coords)]
+        # shp.poly(coords)
+        # shp.record(name, "odata")
+        # polys = loads(row["bound"])
+        # if isinstance(polys, MultiPolygon):
+        #     coords = [list(poly.exterior.coords) for poly in polys.geoms]
+        # else:
+        #     coords = [list(polys.exterior.coords)]
+        # shp.poly(coords)
+        # shp.record(name, "postgis")
         query = gs.query_iterator(
             f"""SELECT rid, ST_AsPNG(rast), ST_AsText(ST_Transform(ST_Envelope(rast), 4326))
-            FROM {name}""",
+            FROM {name} WHERE
+            ST_Intersects(ST_Transform(ST_Envelope(rast), 4326), ST_GeometryFromText('SRID=4326;{row['footprint']}'))
+            AND
+            ST_Width(rast) = 120 AND ST_Height(rast) = 120
+            """,
             ("rid", "png", "geom")
         )
         tile_metadata = []
@@ -180,11 +218,13 @@ def export_images_dataset(outdir):
             shape = loads(rast["geom"])
             corine_classes = cori.intersect(shape)
             if corine_classes:
-                print(corine_classes)
-                filepath = outdir / f"{tile_name}.png"
-                if not filepath.exists():
-                    with open(str(filepath), "wb") as handle:
-                        handle.write(rast["png"])
+                highest_class = max(corine_classes, key=lambda c: c[2])
+                print(highest_class, corine_classes)
+                filedir = outdir / str(row["date"].year) / highest_class[1]
+                filedir.mkdir(parents=True, exist_ok=True)
+                filepath = filedir / f"{tile_name}_p{highest_class[2]:.2f}.png"
+                with open(str(filepath), "wb") as handle:
+                    handle.write(rast["png"])
                 tile_metadata.append(
                     {
                         "name": tile_name,
@@ -193,7 +233,7 @@ def export_images_dataset(outdir):
                         "snowcover": row["snowcover"],
                         "cloudcover": row["cloudcover"],
                         "corine_classes": corine_classes,
-                        "max_class": max(corine_classes, key=lambda c: c[2])
+                        "max_class": highest_class,
                     }
                 )
             else:
@@ -206,12 +246,15 @@ def export_images_dataset(outdir):
         with open(str(outdir / f"{name}_failed.json"), "w") as handle:
             json.dump(failed, handle)
 
+    shp.close()
+
+    print(filtered_out)
     cori.close()
     gs.close()
 
 
 def main():
-    export_images_dataset("sentinel-dataset")
+    export_images_dataset("better-dataset")
 
 
 

@@ -159,7 +159,7 @@ class Corine:
         return intersections
 
 
-def export_images_dataset(outdir):
+def export_images_dataset(outdir, name="final"):
     outdir = pathlib.Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
@@ -172,9 +172,11 @@ def export_images_dataset(outdir):
     failed = []
     filtered_out = 0
 
-    shp = shapefile.Writer("testbounds.shp")
+    shp = shapefile.Writer(f"{name}.shp")
     shp.field("name", "C")
+    shp.field("year", "N")
     shp.field("type", "C")
+    shp.field("ratio", "N")
 
     for _, row in dataset.iterrows():
         name = row["r_table_name"]
@@ -184,7 +186,7 @@ def export_images_dataset(outdir):
         if row["snowcover"] > 1.0:
             filtered_out += 1
             continue
-        if row["waterpercentage"] > 10.0:
+        if row["waterpercentage"] > 80.0:
             filtered_out += 1
             continue
         # print(row["footprint"], row["bound"])
@@ -218,7 +220,11 @@ def export_images_dataset(outdir):
             shape = loads(rast["geom"])
             corine_classes = cori.intersect(shape)
             if corine_classes:
-                highest_class = max(corine_classes, key=lambda c: c[2])
+                summed_ratios = collections.defaultdict(int)
+                for _, corine_class, ratio in corine_classes:
+                    summed_ratios[corine_class] += ratio
+                highest_key = max(summed_ratios, key=lambda c: summed_ratios[c])
+                highest_class = ("", highest_key, summed_ratios[highest_key])
                 print(highest_class, corine_classes)
                 filedir = outdir / str(row["date"].year) / highest_class[1]
                 filedir.mkdir(parents=True, exist_ok=True)
@@ -237,7 +243,20 @@ def export_images_dataset(outdir):
                     }
                 )
             else:
+                highest_class = ("", "", 1.0)
                 failed.append({"name": tile_name, "geom": rast["geom"]})
+
+            if isinstance(shape, MultiPolygon):
+                coords = [list(poly.exterior.coords) for poly in shape.geoms]
+            else:
+                coords = [list(shape.exterior.coords)]
+            shp.poly(coords)
+            shp.record(
+                tile_name,
+                row["date"].year,
+                highest_class[1],
+                highest_class[2],
+            )
             print("--------")
 
         with open(str(outdir / f"{name}.json"), "w") as handle:
@@ -254,7 +273,7 @@ def export_images_dataset(outdir):
 
 
 def main():
-    export_images_dataset("better-dataset")
+    export_images_dataset("final-dataset")
 
 
 

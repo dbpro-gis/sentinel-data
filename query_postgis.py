@@ -7,6 +7,7 @@ import os
 import json
 import pathlib
 import datetime
+from argparse import ArgumentParser
 
 import psycopg2
 import pandas as pd
@@ -16,6 +17,8 @@ import shapefile
 from shapely.geometry import Polygon, MultiPolygon
 from shapely.wkt import loads
 
+POSTGIS_HOST = os.environ["PGHOST"]
+POSTGIS_PORT = os.environ["PGPORT"]
 POSTGIS_USER = os.environ["PGUSER"]
 POSTGIS_PASSWORD = os.environ["PGPASSWORD"]
 
@@ -108,20 +111,23 @@ class Corine:
             self,
             gs: Geospatial = None,
             index_name: str = "corine",
-            force_reload: bool = False):
+            force_reload: bool = False,
+            dbname: str = "corinagermanydata"):
+        self._dbname = dbname
         if not pathlib.Path(f"{index_name}.idx").exists() or force_reload:
             self._idx = index.Index(index_name)
             self._load_corine(gs, index_name)
         else:
             with open(f"{index_name}.json", "r") as handle:
                 self._corine = json.load(handle)
-            self._corine["shapes"] = [loads(p) for p in self._corine["polygon"]]
+            self._corine["shapes"] = [
+                loads(p) for p in self._corine["polygon"]]
             self._idx = index.Index(index_name)
 
     def _load_corine(self, gs: Geospatial, index_name):
         self._corine = gs.query(
-            """SELECT id, code_18, ST_AsText(ST_Transform(geom, 4326))
-            FROM corinagermanydata""", ("id", "code_18", "polygon"))
+            f"""SELECT id, code_18, ST_AsText(ST_Transform(geom, 4326))
+            FROM {self._dbname}""", ("id", "code_18", "polygon"))
         with open(f"{index_name}.json", "w") as handle:
             json.dump(self._corine, handle)
         self._corine["shapes"] = []
@@ -157,16 +163,17 @@ class Corine:
         return intersections
 
 
-def export_images_dataset(outdir, name="final"):
+def export_images_dataset(outdir, corinedb, metafile):
     outdir = pathlib.Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
+    name = str(outdir.name)
 
     gs = Geospatial(
-        "127.0.0.1", port=31313,
+        POSTGIS_HOST, port=POSTGIS_PORT,
         password=POSTGIS_PASSWORD, user=POSTGIS_USER)
 
-    cori = Corine(gs)
-    dataset = get_raster_tables(gs, "metadata.json")
+    cori = Corine(gs, dbname=corinedb)
+    dataset = get_raster_tables(gs, metafile)
     failed = []
     filtered_out = 0
 
@@ -187,21 +194,6 @@ def export_images_dataset(outdir, name="final"):
         if row["waterpercentage"] > 80.0:
             filtered_out += 1
             continue
-        # print(row["footprint"], row["bound"])
-        # polys = loads(row["footprint"])
-        # if isinstance(polys, MultiPolygon):
-        #     coords = [list(poly.exterior.coords) for poly in polys.geoms]
-        # else:
-        #     coords = [list(polys.exterior.coords)]
-        # shp.poly(coords)
-        # shp.record(name, "odata")
-        # polys = loads(row["bound"])
-        # if isinstance(polys, MultiPolygon):
-        #     coords = [list(poly.exterior.coords) for poly in polys.geoms]
-        # else:
-        #     coords = [list(polys.exterior.coords)]
-        # shp.poly(coords)
-        # shp.record(name, "postgis")
         query = gs.query_iterator(
             f"""SELECT rid, ST_AsPNG(rast), ST_AsText(ST_Transform(ST_Envelope(rast), 4326))
             FROM {name} WHERE
@@ -270,10 +262,15 @@ def export_images_dataset(outdir, name="final"):
     gs.close()
 
 
-def main():
-    export_images_dataset("final-dataset")
-
+def main(args):
+    export_images_dataset(args.output, args.corine, args.metadata)
 
 
 if __name__ == "__main__":
-    main()
+    PARSER = ArgumentParser()
+    PARSER.add_argument("output", help="Output dataset directory")
+    PARSER.add_argument(
+        "--metadata", default="metadata.json", help="Tile metadata json")
+    PARSER.add_argument(
+        "--corine", default="corinagermanydata", help="Corine data table")
+    main(PARSER.parse_args())

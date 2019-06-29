@@ -5,7 +5,6 @@ Search for satellite images in specified geographical area.
 1. Obtain a overview of all products covering area.
 2. Try to obtain least amount of cloud coverage for all areas.
 3. Export a list of products which we will download.
-4. Initiate download.
 """
 import os
 import sys
@@ -14,6 +13,7 @@ import pathlib
 import datetime
 import collections
 import xml.etree.ElementTree as ET
+from argparse import ArgumentParser
 
 import requests
 import requests_cache
@@ -347,14 +347,6 @@ def plot_cloud_coverage(poly, plot_cloudbins=False, order_footprint=False):
             low_cloud_meta, f"shapefiles/low_cloud_{perc}")
 
 
-def download_data_test():
-    """Test downloading TCI images using the ODATA API."""
-    odata = OData(COPERNICUS_USER, COPERNICUS_PASS)
-    uuid = "e96bba40-33de-491b-b123-866f4e60bbca"
-    path = odata.get_tci_image_path(uuid)
-    odata.download(path, f"download/{uuid}_tci.jp2")
-
-
 def reduce_footprint_unique(metas):
     """Remove all footprints completely overlapping with shapes covering area
     alone.
@@ -385,7 +377,7 @@ def reduce_footprint_unique(metas):
     return filtered
 
 
-def smallest_cover_set(poly):
+def filter_cover_set(poly):
     """Test filtering entries down to smallest cover set for germany."""
     terms = {
         "platformname": "Sentinel-2",
@@ -425,7 +417,7 @@ def smallest_cover_set(poly):
     return filtered
 
 
-def very_selective(poly):
+def filter_property(poly):
     """Test filtering entries down to smallest cover set for germany."""
     terms = {
         "platformname": "Sentinel-2",
@@ -491,25 +483,35 @@ def save_metadata(metas, outfile):
             json.dump(metas, f)
 
 
-def main():
+def merge_metas(meta_a, meta_b):
+    """Merge two lists of meta objects on uuid"""
+    metas = meta_a.copy()
+    found_uuids = [m["uuid"] for m in metas]
+    for meta in meta_b:
+        uuid = meta["uuid"]
+        if uuid not in found_uuids:
+            metas.append(meta)
+            found_uuids.append(uuid)
+    return metas
+
+
+def main(args):
     poly = polygon_from_bound_box(BOUNDS_GERMANY)
 
-    very_selective(poly)
+    property_metas = filter_property(poly)
+    coverset_metas = filter_cover_set(poly)
+    metas = merge_metas(property_metas, coverset_metas)
 
-    ### Plot footprint coverage for both satellites
-    # plot_footprint_coverage(poly, satellite="S2A")
-    # plot_footprint_coverage(poly, satellite="S2B")
+    if args.urls:
+        print("Generating download urls")
+        generate_download_urls(metas, args.urls)
 
-    ### Plot cloud cover using data from all satellites
-    # plot_cloud_coverage(poly)
-
-    ### Download satellite data
-    # download_data_test()
-
-    ### Filtering data down to smallest cover set
-    # metas = smallest_cover_set(poly)
-    # paths = generate_download_urls(metas)
-    # save_metadata(metas, "metadata.json")
+    if args.meta:
+        print("Saving metadata")
+        save_metadata(metas, "metadata.json")
 
 if __name__ == "__main__":
-    main()
+    PARSER = ArgumentParser()
+    PARSER.add_argument("--meta", default=None, help="Save metadata as json to destination")
+    PARSER.add_argument("--urls", default=None, help="Generate download urls to destination")
+    main(PARSER.parse_args())

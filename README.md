@@ -52,17 +52,16 @@ python3 copernicus_links.py --meta metadata.json --urls filepaths.txt
 
 ### Image download
 
-|Input|`filepaths.txt`|
-|Script|`download_files.sh`|
-|Output|Folder with downloaded tif files|
-
 The download of the data itself is handled via curl in the script
 `download_files.sh`.
 
-The downloaded TCI (true color images, eg 3-band RGB images) are in jp2000,
-which is not widely supported. The data is converted to TIFF using the script
-`process_images.sh`. This depends on a binary for gdal_translate being
-available.
+```
+./download_files.sh filepaths.txt ./download
+```
+
+The downloaded TCI (true color images, eg 3-band RGB images) are in jp2000. This
+format can be directly imported into postgis via raster2psql, as long as a
+jp2000 driver is available.
 
 ## PostGIS import
 

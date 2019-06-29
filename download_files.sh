@@ -1,5 +1,10 @@
 #!/bin/bash
-outdir=download
+if [ "$#" -ne 2 ]; then
+	echo "Usage: <filepaths> <output_dir>"
+	exit
+fi
+filepaths=$1
+outdir=$2
 
 mkdir -p $outdir
 while read p; do
@@ -10,4 +15,4 @@ while read p; do
 	else
 		curl -o $filepath -u $COPERNICUS_USER:$COPERNICUS_PASS "https://scihub.copernicus.eu/dhus/odata/v1$p"
 	fi
-done <$1
+done <$filepaths

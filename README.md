@@ -39,14 +39,16 @@ export COPERNICUS_PASS=testpass
 
 ### Image Link generation
 
-|Input| None|
-|Script| `copernicus_links.py`|
-|Output| filepaths.txt|
-
-Usable files are queried using the `fetch_images.py` script. This file can
+Usable files are queried using the `copernicus_links.py` script. This file can
 produce a list of URL fragments usable for data download. An example output
 of that file is contained in `filepaths.txt`, which is the list of images
 used in the project.
+
+Example usage:
+
+```
+python3 copernicus_links.py --meta metadata.json --urls filepaths.txt
+```
 
 ### Image download
 

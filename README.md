@@ -83,17 +83,54 @@ The import of the data into a PostGIS database is handled via
 This step will already tile the images into 120x120px tiles, which will then be
 directly used on export.
 
-Example usage:
-
 ```
 ./postgis_import.sh ./download ./table_names.txt >> images_postgis.log
 ```
 
 ## Tile export
 
+### Corine Shape Annotation
+
+The tile export requires available corine classes. These have to be loaded into
+the database prior to the tile export. We use a manually processed corine shape
+file.
+
+```
+shp2pgsql -I -s 4326 corinagermanydata.shp | psql
+```
+
+### Processing of tiles
+
+Tile export requires filtering all tiles in the PostGIS dataset for tiles of
+120x120 size and containing information. Blank tiles will exist inside PostGIS,
+since the whole rectangular image with black borders will have been imported in
+the previous step.
+
+```
+python3 query_postgis.py --metadata metadata.json --corine corinagermanydata ./dataset
+```
+
 Export of PNG image tiles is handled in `query_postgis.py`.
 
 Based on a region query, all found rasters will be exported to 120px120p PNG
-files. An accompanying CSV file will contain additional metadata for the PNG
-files mapping filenames to geographical extent and additional classification
-data.
+files.
+
+The directory structure will follow the major and year class.
+
+```
+final-dataset
+├── 2018
+│   ├── 111
+│   ├── 112
+│   ├── ...
+│   ├── 522
+│   └── 523
+├── 2019
+│   ├── 111
+│   ├── 112
+│   ├── ...
+│   ├── 522
+│   └── 523
+```
+
+A single filename will consist of `<table_name>_T<raster_id>_p<major_percentage>.png`.

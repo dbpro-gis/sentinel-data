@@ -16,8 +16,6 @@ import shapefile
 from shapely.geometry import Polygon, MultiPolygon
 from shapely.wkt import loads
 
-# TODO: VISUALIZATION: FETCH IMAGES WITH JAVASCRIPT
-
 POSTGIS_USER = os.environ["PGUSER"]
 POSTGIS_PASSWORD = os.environ["PGPASSWORD"]
 

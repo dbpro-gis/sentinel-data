@@ -443,11 +443,13 @@ def filter_property(poly):
     final_2019 = [m for m in low_water if m["beginposition"].year == 2019]
     print("2019:", len(final_2019))
 
+    final_both = final_2018 + final_2019
+
 
     # export_meta_shapes_to_shapefile(
     #     filtered, f"shapefiles/unique_set")
 
-    return metas
+    return final_both
 
 
 def generate_download_urls(metas, outfile="filepaths.txt"):

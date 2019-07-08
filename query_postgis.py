@@ -181,7 +181,7 @@ def export_images_dataset(outdir, corinedb, metafile):
     shp.field("name", "C")
     shp.field("year", "N")
     shp.field("type", "C")
-    shp.field("ratio", "N")
+    shp.field("ratio", "N", decimal=2)
 
     for _, row in dataset.iterrows():
         name = row["r_table_name"]

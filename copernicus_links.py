@@ -77,6 +77,8 @@ def parse_size(size):
 
 
 class OData:
+    """Wrapper around Copernicus OData API used for building complete file
+    urls."""
     base_url = "https://scihub.copernicus.eu/dhus/odata/v1"
     _ns = {
         "a": "http://www.w3.org/2005/Atom",
@@ -96,6 +98,11 @@ class OData:
         return req.text
 
     def request_nodes(self, path):
+        """Return all nodes below the given node.
+
+        OData returns nodes in XML format, which we parse and return a list of
+        filenames.
+        """
         text = self.request(path)
         tree = ET.fromstring(text)
         filename_nodes = tree.findall(
@@ -104,17 +111,24 @@ class OData:
         return filenames
 
     def product_filename(self, uuid):
+        """Return product name for a given UUID."""
         path = f"Products('{uuid}')/Nodes"
         filenames = self.request_nodes(path)
         return filenames[0]
 
     def metadata(self):
+        """Return metadata odata. Used for validation purposes."""
         result = self.request("$metadata")
         print(result)
 
     def get_tci_image_path(self, uuid, filename):
+        """Return complete TCI Image path by iteratively filling missing info
+        from node tree traversal."""
         fileparts = filename.split("_")
         tci_name = f"{fileparts[5]}_{fileparts[2]}_TCI_10m.jp2"
+        # path elems as List of Tuples
+        # Strings are used as is, otherwise the value has to be callable
+        # The function filters returned filenames to return a single string
         path_elems = [
             ("Products", uuid),
             ("Nodes", filename),
@@ -126,6 +140,8 @@ class OData:
             ("Nodes", tci_name),
         ]
 
+        # Get node for current step by either appending literal string or
+        # Requesting filenames and using filterfunction in value
         parsed_path_elems = []
         querypath = ""
         for name, value in path_elems:
@@ -141,6 +157,7 @@ class OData:
         return querypath
 
     def download(self, path, outpath):
+        """Download data at path to given outpath."""
         url = f"{self.base_url}/{path}"
         pathlib.Path(outpath).parent.mkdir(parents=True, exist_ok=True)
         filename = pathlib.Path(outpath).name
@@ -165,6 +182,7 @@ ODATA = OData(COPERNICUS_USER, COPERNICUS_PASS)
 
 
 class OpenSearch:
+    """Opensearch Copernicus API wrapper"""
 
     base_url = "https://scihub.copernicus.eu/dhus"
     _ns = {
@@ -201,6 +219,7 @@ class OpenSearch:
 
     @classmethod
     def parse_entry(cls, entry):
+        """Convert entry in XML into a python dict."""
         meta = {}
         for field, field_type in cls.entry_fields.items():
             value = entry.find(
@@ -216,6 +235,7 @@ class OpenSearch:
         return meta
 
     def _parse_xml(self, tree):
+        """Return list of elements and some parsed results from XML"""
         if isinstance(tree, str):
             tree = ET.fromstring(tree)
 
@@ -237,9 +257,11 @@ class OpenSearch:
         return resp.text
 
     def search(self, *args, **kwargs):
+        """Wrapper around query and XML parser."""
         return self._parse_xml(self.search_raw(*args, **kwargs))
 
     def search_terms(self, terms):
+        """Search using given query string."""
         query = create_query(terms)
         max_index = 0
         entries = []
@@ -257,6 +279,7 @@ SEARCH = OpenSearch(COPERNICUS_USER, COPERNICUS_PASS)
 
 
 def export_meta_shapes_to_shapefile(metas, outpath):
+    """Export generated meta shapes to shapefile for visual inspection in QGIS."""
     with shapefile.Writer(outpath) as shp:
         shp.field("name", "C")
         shp.field("cloudcover", "C")
@@ -303,6 +326,7 @@ def plot_footprint_coverage(poly, satellite="S2A"):
 
 
 def plot_cloud_coverage(poly, plot_cloudbins=False, order_footprint=False):
+    """Plot distribution of cloud cover"""
     terms = {
         "platformname": "Sentinel-2",
         "producttype": "S2MSI2A",

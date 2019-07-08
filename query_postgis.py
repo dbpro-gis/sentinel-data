@@ -75,6 +75,9 @@ class Geospatial:
 
 
 def get_raster_tables(gs: Geospatial, metadata: str) -> pd.DataFrame:
+    """Get a list of raster tables with associated metadata in json from
+    previous opensearch query. Return a pandas dataframe with metadata in
+    columns."""
     result = gs.query(
         """SELECT r_table_name, ST_AsText(ST_Transform(extent, 4326))
         FROM raster_columns""",
@@ -107,6 +110,8 @@ def get_raster_tables(gs: Geospatial, metadata: str) -> pd.DataFrame:
 
 
 class Corine:
+    """Manage intersections against the Corine dataset using rtree.
+    """
     def __init__(
             self,
             gs: Geospatial = None,
@@ -114,6 +119,7 @@ class Corine:
             force_reload: bool = False,
             dbname: str = "corinagermanydata"):
         self._dbname = dbname
+        # Load previous rtree index or generate new
         if not pathlib.Path(f"{index_name}.idx").exists() or force_reload:
             self._idx = index.Index(index_name)
             self._load_corine(gs, index_name)
@@ -125,6 +131,7 @@ class Corine:
             self._idx = index.Index(index_name)
 
     def _load_corine(self, gs: Geospatial, index_name):
+        """Query corine information from PostGIS server."""
         self._corine = gs.query(
             f"""SELECT id, code_18, ST_AsText(ST_Transform(geom, 4326))
             FROM {self._dbname}""", ("id", "code_18", "polygon"))
@@ -177,6 +184,7 @@ def export_images_dataset(outdir, corinedb, metafile):
     failed = []
     filtered_out = 0
 
+    # Add information on patches into shp file usable for visualization
     shp = shapefile.Writer(f"{name}.shp")
     shp.field("name", "C")
     shp.field("year", "N")
@@ -185,6 +193,7 @@ def export_images_dataset(outdir, corinedb, metafile):
 
     for _, row in dataset.iterrows():
         name = row["r_table_name"]
+        # Skip datasets not fulfilling criteria
         if row["cloudcover"] > 1.0:
             filtered_out += 1
             continue
@@ -194,6 +203,8 @@ def export_images_dataset(outdir, corinedb, metafile):
         if row["waterpercentage"] > 80.0:
             filtered_out += 1
             continue
+        # Get all tiles with 120x120 width and intersected on satellite image
+        # footprint to avoid black tiles, since images are always rectangular.
         query = gs.query_iterator(
             f"""SELECT rid, ST_AsPNG(rast), ST_AsText(ST_Transform(ST_Envelope(rast), 4326))
             FROM {name} WHERE
@@ -208,8 +219,11 @@ def export_images_dataset(outdir, corinedb, metafile):
             print(rast)
             tile_name = f"{name}_T{rast['rid']}"
             shape = loads(rast["geom"])
+            # intersect tile against corine and add to dataset if any
+            # intersections
             corine_classes = cori.intersect(shape)
             if corine_classes:
+                # merge corine intersections with same label
                 summed_ratios = collections.defaultdict(int)
                 for _, corine_class, ratio in corine_classes:
                     summed_ratios[corine_class] += ratio
